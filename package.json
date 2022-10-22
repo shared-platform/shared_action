@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "github-script": "file:github-script"
+  }
+}
