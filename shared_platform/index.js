@@ -59,19 +59,85 @@ async function getGitVersion() {
   }
 }
 
-function getPackageVersion() {
-  // eslint-disable-next-line no-undef
-  const packageConfig = require("./package.json");
-  const versionParts = packageConfig.version.split(".");
-  // we don't care about the patch version, it is used as build number and increased by the CI
-  return new Version(versionParts[0], versionParts[1], 0);
+async function _getToml(){
+  try {
+    return require("toml");
+  } catch (error) {
+    console.log("Toml was not installed, installing it now");
+  }
+  let stdout, stderr
+  try {
+    [stdout, stderr] = await run_shell("npm install toml");
+    console.log("Toml installed", stdout, stderr);
+    return require("toml");
+  } catch (error) {
+    console.error("Toml installation failed", error, stderr);
+    throw error;
+  }
+}
+
+async function _getNodePackageVersion() {
+  console.log("_getNodePackageVersion");
+  try {
+    // eslint-disable-next-line no-undef
+    const packageConfig = require("./package.json");
+    const versionParts = packageConfig.version.split(".");
+    // we don't care about the patch version, it is used as build number and increased by the CI
+    return new Version(versionParts[0], versionParts[1], 0);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function _getPythonPoetryPackageVersion() {
+  console.log("_getPythonPoetryPackageVersion");
+  try {
+    // eslint-disable-next-line no-undef
+    console.log("getting toml");
+    const toml = await _getToml();
+    console.log("getting fs");
+    const fs = require("fs");
+
+    console.log("loading file pyproject.toml");
+    const projectConfig = toml.parse(fs.readFileSync("pyproject.toml", "utf8"));
+    console.log("projectConfig: ", projectConfig);
+    const versionParts = projectConfig.tool.poetry.version.split(".");
+    // we don't care about the patch version, it is used as build number and increased by the CI
+    return new Version(versionParts[0], versionParts[1], 0);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function getPackageVersion() {
+  // TODO move this outside of the action
+  // this cant be done right now as  global scope is not automatically passed
+  // to the final script
+  const _getPackageVersionStrategies = [
+    _getNodePackageVersion,
+    _getPythonPoetryPackageVersion,
+  ];
+
+  for (const strategy of _getPackageVersionStrategies) {
+    try{
+      const version = await strategy();
+      console.log("trying strategy", strategy, "got", version);
+      if (version) {
+        return version;
+      }
+    } catch (error) {
+      console.log("trying strategy", strategy, " FAILED");
+    }
+  }
+
+  throw new Error("Could not determine package version");
 }
 
 async function createGithubTag(version, full = false) {
   try {
     const tag = full ? version.asFullTag() : version.asMinorTag();
     console.log(`Creating git tag ${tag}`);
-    await githubClient.rest.git.createRef({
+    await github.rest.git.createRef({
       owner: context.repo.owner,
       repo: context.repo.repo,
       ref: `refs/tags/${tag}`,
@@ -174,3 +240,7 @@ exports.releaseDocker = releaseDocker;
 
 exports.getInput = getInput;
 exports.run_shell = run_shell;
+
+exports._getToml = _getToml;
+exports._getNodePackageVersion = _getNodePackageVersion;
+exports._getPythonPoetryPackageVersion = _getPythonPoetryPackageVersion;
